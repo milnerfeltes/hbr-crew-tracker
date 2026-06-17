@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#11151c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="HBR Tracker">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>HBR Task Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#11151c; --panel:#181d26; --panel2:#1f2530; --line:#2a313d;
+    --ink:#eef1f5; --mut:#8b95a3; --amber:#ffb020; --amber-d:#7a5410;
+    --green:#36c26a; --red:#ef4d4d; --blue:#3d8bff;
+    --safe-t:env(safe-area-inset-top); --safe-b:env(safe-area-inset-bottom);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);
+    padding-bottom:calc(40px + var(--safe-b));-webkit-font-smoothing:antialiased;}
+  .head{background:var(--bg);padding:calc(14px + var(--safe-t)) 18px 0;position:sticky;top:0;z-index:20;}
+  .brand{display:flex;align-items:baseline;gap:10px;border-bottom:2px solid var(--amber);padding-bottom:12px;}
+  .brand .mark{font-family:'Archivo';font-weight:800;font-size:21px;letter-spacing:-.02em;line-height:1;}
+  .brand .mark span{color:var(--amber);}
+  .brand .sub{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.14em;margin-left:auto;}
+  .tabs{display:flex;background:var(--bg);position:sticky;top:calc(58px + var(--safe-t));z-index:19;border-bottom:1px solid var(--line);}
+  .tab{flex:1;text-align:center;padding:14px 0;font-family:'Archivo';font-weight:700;font-size:13px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--mut);cursor:pointer;border-bottom:3px solid transparent;transition:.15s;}
+  .tab.active{color:var(--ink);border-bottom-color:var(--amber);}
+  .bar-row{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--bg);border-bottom:1px solid var(--line);}
+  .bar-row label{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;}
+  .bar-row input[type=date]{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    padding:9px 11px;border-radius:9px;font-size:15px;font-family:inherit;}
+  .nav-day{margin-left:auto;display:flex;gap:6px;}
+  .nav-day button{background:var(--panel2);border:1px solid var(--line);color:var(--ink);width:38px;height:38px;
+    border-radius:9px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+
+  /* overall scorecard */
+  .score{display:flex;align-items:center;gap:18px;background:var(--panel);margin:16px 12px;padding:18px 20px;
+    border-radius:16px;border:1px solid var(--line);}
+  .ring{position:relative;width:92px;height:92px;flex-shrink:0;}
+  .ring svg{transform:rotate(-90deg);display:block;}
+  .ring .pc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-family:'Archivo';font-weight:800;font-size:23px;}
+  .score .lead{font-family:'Archivo';font-weight:700;font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);}
+  .score .big{font-family:'Archivo';font-weight:800;font-size:26px;margin:2px 0 4px;letter-spacing:-.01em;}
+  .score .note{font-size:13px;}
+  .score .note.warn{color:var(--amber);} .score .note.good{color:var(--green);}
+
+  .crew-label{font-family:'Archivo';font-weight:700;font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--mut);padding:4px 22px 8px;}
+  .worker{background:var(--panel);margin:0 12px 12px;border-radius:16px;border:1px solid var(--line);overflow:hidden;}
+  .w-head{display:flex;align-items:center;justify-content:space-between;padding:15px 18px 12px;}
+  .w-name{font-family:'Archivo';font-weight:700;font-size:17px;letter-spacing:-.01em;}
+  .w-pct{font-family:'Archivo';font-weight:800;font-size:14px;}
+  .track{height:7px;background:var(--panel2);border-radius:7px;margin:0 18px 8px;overflow:hidden;}
+  .track i{display:block;height:100%;border-radius:7px;transition:width .35s ease;}
+  .tasks{padding:2px 10px 8px;}
+  .task{border-top:1px solid var(--line);padding:11px 8px;}
+  .t-row{display:flex;align-items:center;gap:13px;}
+  .check{width:30px;height:30px;border-radius:9px;border:2px solid #4a5462;flex-shrink:0;display:flex;
+    align-items:center;justify-content:center;font-size:18px;color:#fff;cursor:pointer;transition:.12s;}
+  .check.on{background:var(--green);border-color:var(--green);}
+  .t-text{flex:1;font-size:15.5px;line-height:1.35;cursor:pointer;}
+  .task.done .t-text{text-decoration:line-through;color:var(--mut);}
+  .x{color:var(--mut);font-size:22px;line-height:1;padding:2px 8px;cursor:pointer;}
+  .why{margin:9px 0 2px 43px;}
+  .why input{width:100%;background:#241a0e;color:#ffce8a;border:1px solid var(--amber-d);
+    padding:9px 11px;border-radius:9px;font-size:13.5px;font-family:inherit;}
+  .why input::placeholder{color:#a87f48;}
+  .why-tag{margin:8px 0 2px 43px;font-size:13px;color:#ffc266;background:#231a0f;border-left:3px solid var(--amber);
+    padding:8px 11px;border-radius:8px;cursor:pointer;}
+  .add{display:flex;gap:9px;padding:11px 10px 4px;}
+  .add input{flex:1;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    padding:12px 13px;border-radius:10px;font-size:15px;font-family:inherit;}
+  .add button{background:var(--amber);color:#1a1205;border:none;width:50px;border-radius:10px;
+    font-size:24px;font-weight:700;cursor:pointer;}
+
+  .blockers{background:var(--panel);margin:4px 12px 14px;border-radius:16px;border:1px solid #3a2c14;overflow:hidden;}
+  .blockers h2{font-family:'Archivo';font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--amber);padding:14px 18px;background:#221a0d;}
+  .bk{padding:12px 18px;border-top:1px solid var(--line);font-size:14px;}
+  .bk .bt{font-weight:600;} .bk .bw{color:var(--mut);font-size:12.5px;}
+  .bk .br{color:#ffc266;margin-top:4px;cursor:pointer;}
+  .bk .br.empty{color:var(--mut);font-style:italic;}
+  .done-all{padding:18px;text-align:center;color:var(--green);font-family:'Archivo';font-weight:700;font-size:15px;}
+
+  .export{display:block;width:calc(100% - 24px);margin:8px 12px 14px;background:var(--green);color:#04240f;
+    border:none;padding:16px;border-radius:13px;font-family:'Archivo';font-weight:800;font-size:16px;
+    letter-spacing:.02em;cursor:pointer;}
+  .export:active{filter:brightness(.92);}
+
+  .wk-day{background:var(--panel);margin:0 12px 12px;border-radius:16px;border:1px solid var(--line);overflow:hidden;}
+  .wk-day h3{font-family:'Archivo';font-weight:700;font-size:14px;padding:13px 18px;background:var(--panel2);
+    display:flex;justify-content:space-between;align-items:center;}
+  .wk-day h3 .p{font-weight:800;}
+  .wk-w{padding:9px 18px;border-top:1px solid var(--line);}
+  .wk-w .n{font-weight:600;font-size:14px;margin-bottom:3px;}
+  .wk-w .n span{color:var(--mut);font-weight:400;font-size:12px;}
+  .wk-t{font-size:13.5px;padding:3px 0 3px 6px;color:#c4ccd6;}
+  .wk-t.d{color:var(--mut);} .wk-t .m{color:var(--green);}
+  .wk-r{color:#ffc266;font-size:12.5px;margin-left:20px;}
+  .empty{padding:15px 18px;font-size:13.5px;color:var(--mut);}
+
+  .foot{text-align:center;font-size:11.5px;color:var(--mut);padding:14px 20px;line-height:1.6;}
+  .status{text-align:center;font-size:11.5px;padding:6px 16px 0;color:var(--mut);}
+  .status.warn{color:var(--amber);}
+  .hidden{display:none;}
+  .loading{text-align:center;padding:50px;color:var(--mut);}
+  @media (prefers-reduced-motion: reduce){ *{transition:none!important;} }
+  /* install hint */
+  .install{margin:0 12px 14px;background:var(--panel);border:1px solid var(--blue);border-radius:14px;
+    padding:14px 16px;font-size:13px;color:#cfe0ff;display:flex;gap:12px;align-items:flex-start;}
+  .install b{color:#fff;} .install .dismiss{margin-left:auto;color:var(--mut);font-size:20px;cursor:pointer;flex-shrink:0;}
+</style>
+</head>
+<body>
+<div class="head">
+  <div class="brand">
+    <div class="mark">HAMPTON BAYS<span>.</span></div>
+    <div class="sub">Crew Tracker</div>
+  </div>
+</div>
+<div class="tabs">
+  <div class="tab active" data-view="daily">Today</div>
+  <div class="tab" data-view="weekly">Week / Report</div>
+</div>
+
+<div id="dailyView">
+  <div class="bar-row">
+    <label>Day</label>
+    <input type="date" id="datePicker">
+    <div class="nav-day">
+      <button id="prevDay" aria-label="Previous day">‹</button>
+      <button id="todayBtn" aria-label="Today" style="width:auto;padding:0 12px;font-size:13px;font-weight:600">Today</button>
+      <button id="nextDay" aria-label="Next day">›</button>
+    </div>
+  </div>
+  <div id="installHint"></div>
+  <div id="overall"></div>
+  <div class="crew-label">Crew</div>
+  <div id="workers"><div class="loading">Loading…</div></div>
+  <div id="blockers"></div>
+  <div id="saveStatus" class="status"></div>
+  <div class="foot">Tap a task name to log why it isn't finished. Everything saves on this phone — works offline.</div>
+</div>
+
+<div id="weeklyView" class="hidden">
+  <div class="bar-row">
+    <label>Week of</label>
+    <input type="date" id="weekPicker">
+  </div>
+  <button class="export" id="exportPdf">Export &amp; share PDF report</button>
+  <div id="weekOverall"></div>
+  <div id="weekContent"><div class="loading">Loading…</div></div>
+  <div class="foot">Monday–Sunday. The PDF lists every task, completion %, and the reasons anything isn't done.</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
