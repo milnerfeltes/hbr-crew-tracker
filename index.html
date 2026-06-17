@@ -75,6 +75,10 @@
   .why input::placeholder{color:#a87f48;}
   .why-tag{margin:8px 0 2px 43px;font-size:13px;color:#ffc266;background:#231a0f;border-left:3px solid var(--amber);
     padding:8px 11px;border-radius:8px;cursor:pointer;}
+  .pct-row{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 9px 43px;}
+  .pct-chip{background:var(--panel2);color:var(--ink);border:1px solid var(--line);padding:7px 12px;
+    border-radius:20px;font-size:13px;font-family:'Archivo';font-weight:700;cursor:pointer;}
+  .pct-chip.active{background:var(--amber);color:#1a1205;border-color:var(--amber);}
   .add{display:flex;gap:9px;padding:11px 10px 4px;}
   .add input{flex:1;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
     padding:12px 13px;border-radius:10px;font-size:15px;font-family:inherit;}
@@ -147,7 +151,7 @@
   <div id="workers"><div class="loading">Loading…</div></div>
   <div id="blockers"></div>
   <div id="saveStatus" class="status"></div>
-  <div class="foot">Tap a task name to log why it isn't finished. Everything saves on this phone — works offline.</div>
+  <div class="foot">Tap a task name to set a % done and log why it isn't finished. Everything saves on this phone — works offline.</div>
 </div>
 
 <div id="weeklyView" class="hidden">

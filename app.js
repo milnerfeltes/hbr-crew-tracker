@@ -16,6 +16,8 @@ function newId(){ return Date.now().toString(36)+Math.random().toString(36).slic
 function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function fmtDate(d){ const dt=new Date(d+"T00:00:00"); return dt.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}); }
 function pctColor(p){ return p>=100?"#36c26a":p>=50?"#ffb020":"#ef4d4d"; }
+function pctOf(t){ return typeof t.pct==="number" ? t.pct : (t.done?100:0); }
+function isDone(t){ return pctOf(t)>=100; }
 function shiftDay(dateStr,n){ const d=new Date((dateStr||todayStr())+"T00:00:00"); d.setDate(d.getDate()+n); return toLocalStr(d); }
 function mondayOf(dateStr){
   if(!dateStr) dateStr=todayStr();
@@ -67,7 +69,13 @@ function lsSet(d,obj){ try{ localStorage.setItem(lsKey(d),JSON.stringify(obj)); 
 /* ---------- data model ---------- */
 function normalize(day){
   day=day||{};
-  WORKERS.forEach(w=>{ if(!Array.isArray(day[w])) day[w]=[]; day[w].forEach(t=>{ if(typeof t.reason!=="string") t.reason=""; }); });
+  WORKERS.forEach(w=>{
+    if(!Array.isArray(day[w])) day[w]=[];
+    day[w].forEach(t=>{
+      if(typeof t.reason!=="string") t.reason="";
+      if(typeof t.pct!=="number") t.pct = t.done?100:0;
+    });
+  });
   return day;
 }
 async function getDay(d){
@@ -87,13 +95,29 @@ async function save(){
 async function load(){ state=await getDay(currentDate); render(); }
 
 /* ---------- mutations ---------- */
-function addTask(w,text){ if(!text.trim())return; state[w].push({id:newId(),text:text.trim(),done:false,reason:""}); save(); render(); }
-function toggle(w,id){ const t=state[w].find(x=>String(x.id)===String(id)); if(t){ t.done=!t.done; if(t.done) t.reason=""; } save(); render(); }
+function addTask(w,text){ if(!text.trim())return; state[w].push({id:newId(),text:text.trim(),pct:0,reason:""}); save(); render(); }
+function toggle(w,id){ const t=state[w].find(x=>String(x.id)===String(id)); if(t){ t.pct=isDone(t)?0:100; if(t.pct===100) t.reason=""; } save(); render(); }
 function del(w,id){ state[w]=state[w].filter(x=>String(x.id)!==String(id)); save(); render(); }
 function setReason(w,id,v){ const t=state[w].find(x=>String(x.id)===String(id)); if(t) t.reason=v; save(); }
+function setPct(w,id,val){
+  const t=state[w].find(x=>String(x.id)===String(id)); if(!t) return;
+  val=Math.max(0,Math.min(100,Math.round(Number(val)||0)));
+  t.pct=val;
+  if(val>=100){ t.reason=""; openReason=null; } else { openReason=String(id); }
+  save(); render();
+  if(val<100){ const inp=document.querySelector('.why input[data-id="'+id+'"]'); if(inp) inp.focus(); }
+}
 
 /* ---------- stats + ring ---------- */
-function stats(day){ let done=0,total=0; WORKERS.forEach(w=>{ const ts=day[w]||[]; total+=ts.length; done+=ts.filter(t=>t.done).length; }); return {done,total,pct: total?Math.round(done/total*100):0}; }
+function stats(day){
+  let done=0,total=0,credit=0;
+  WORKERS.forEach(w=>{
+    const ts=day[w]||[];
+    total+=ts.length;
+    ts.forEach(t=>{ const p=pctOf(t); if(p>=100) done++; credit+=p/100; });
+  });
+  return {done,total,credit,pct: total?Math.round(credit/total*100):0};
+}
 function ring(pct,size){
   const r=(size/2)-8, c=2*Math.PI*r, off=c*(1-pct/100), col=pctColor(pct);
   return `<div class="ring" style="width:${size}px;height:${size}px">
@@ -116,9 +140,12 @@ function render(){
     </div>`;
 
   const wrap=document.getElementById("workers"); wrap.innerHTML="";
+  const PRESETS=[100,90,80,70,50,25,0];
   WORKERS.forEach(w=>{
-    const tasks=state[w]||[], done=tasks.filter(t=>t.done).length;
-    const pct=tasks.length?Math.round(done/tasks.length*100):0, col=pctColor(tasks.length?pct:0);
+    const tasks=state[w]||[];
+    const done=tasks.filter(t=>isDone(t)).length;
+    const wCredit=tasks.reduce((a,t)=>a+pctOf(t)/100,0);
+    const pct=tasks.length?Math.round(wCredit/tasks.length*100):0, col=pctColor(tasks.length?pct:0);
     const div=document.createElement("div"); div.className="worker";
     div.innerHTML=`
       <div class="w-head"><div class="w-name">${esc(w)}</div>
@@ -127,14 +154,20 @@ function render(){
       <div class="tasks">
         ${tasks.map(t=>{
           const open=openReason===String(t.id);
+          const p=pctOf(t), tDone=isDone(t);
           let why="";
-          if(!t.done){
-            if(open) why=`<div class="why"><input data-w="${esc(w)}" data-id="${t.id}" data-act="reason" placeholder="Why isn't this done? (materials, weather, client…)" value="${esc(t.reason)}"></div>`;
-            else if(t.reason) why=`<div class="why-tag" data-w="${esc(w)}" data-id="${t.id}" data-act="editreason">⚠ ${esc(t.reason)}</div>`;
+          if(!tDone){
+            if(open){
+              const chips=PRESETS.map(v=>`<button class="pct-chip ${p===v?'active':''}" data-w="${esc(w)}" data-id="${t.id}" data-act="setpct" data-val="${v}">${v}%</button>`).join("");
+              why=`<div class="why"><div class="pct-row">${chips}</div><input data-w="${esc(w)}" data-id="${t.id}" data-act="reason" placeholder="Why isn't this done? (materials, weather, client…)" value="${esc(t.reason)}"></div>`;
+            } else {
+              const parts=[]; if(p>0) parts.push(p+"% done"); if(t.reason) parts.push(t.reason);
+              if(parts.length) why=`<div class="why-tag" data-w="${esc(w)}" data-id="${t.id}" data-act="editreason">⚠ ${esc(parts.join(" — "))}</div>`;
+            }
           }
-          return `<div class="task ${t.done?'done':''}">
+          return `<div class="task ${tDone?'done':''}">
             <div class="t-row">
-              <div class="check ${t.done?'on':''}" data-w="${esc(w)}" data-id="${t.id}" data-act="toggle">${t.done?'✓':''}</div>
+              <div class="check ${tDone?'on':''}" data-w="${esc(w)}" data-id="${t.id}" data-act="toggle">${tDone?'✓':''}</div>
               <div class="t-text" data-w="${esc(w)}" data-id="${t.id}" data-act="openreason">${esc(t.text)}</div>
               <div class="x" data-w="${esc(w)}" data-id="${t.id}" data-act="del">×</div>
             </div>${why}</div>`;
@@ -148,13 +181,17 @@ function render(){
 }
 
 function renderBlockers(){
-  const open=[]; WORKERS.forEach(w=>{ (state[w]||[]).forEach(t=>{ if(!t.done) open.push({w,t}); }); });
+  const open=[]; WORKERS.forEach(w=>{ (state[w]||[]).forEach(t=>{ if(!isDone(t)) open.push({w,t}); }); });
   const el=document.getElementById("blockers");
   if(stats(state).total===0){ el.innerHTML=""; return; }
   if(open.length===0){ el.innerHTML=`<div class="blockers"><h2>Why not 100%?</h2><div class="done-all">✓ Everything finished — 100% complete</div></div>`; return; }
   el.innerHTML=`<div class="blockers"><h2>Why not 100%? — ${open.length} open</h2>
-    ${open.map(({w,t})=>`<div class="bk"><span class="bt">${esc(t.text)}</span> <span class="bw">— ${esc(w)}</span>
-      <div class="br ${t.reason?'':'empty'}" data-w="${esc(w)}" data-id="${t.id}" data-act="openreason">${t.reason?'⚠ '+esc(t.reason):'Tap to add a reason…'}</div></div>`).join("")}
+    ${open.map(({w,t})=>{
+      const p=pctOf(t);
+      const label=[p>0?p+"% done":"",t.reason||""].filter(Boolean).join(" — ");
+      return `<div class="bk"><span class="bt">${esc(t.text)}</span> <span class="bw">— ${esc(w)}</span>
+      <div class="br ${label?'':'empty'}" data-w="${esc(w)}" data-id="${t.id}" data-act="openreason">${label?'⚠ '+esc(label):'Tap to add a % and reason…'}</div></div>`;
+    }).join("")}
   </div>`;
 }
 
@@ -169,7 +206,7 @@ async function renderWeek(){
   const monday=mondayOf(document.getElementById("weekPicker").value);
   const dates=weekDates(monday);
   const wrap=document.getElementById("weekContent"); wrap.innerHTML='<div class="loading">Loading…</div>';
-  let wDone=0,wTotal=0; const data={};
+  let wDone=0,wTotal=0,wCredit=0; const data={};
   for(const d of dates) data[d]=await getDay(d);
   wrap.innerHTML="";
   dates.forEach(d=>{
@@ -178,10 +215,14 @@ async function renderWeek(){
     WORKERS.forEach(w=>{
       const tasks=day[w]||[];
       if(tasks.length){
-        const done=tasks.filter(t=>t.done).length; wDone+=done; wTotal+=tasks.length;
+        const done=tasks.filter(t=>isDone(t)).length; wDone+=done; wTotal+=tasks.length;
         html+=`<div class="wk-w"><div class="n">${esc(w)} <span>(${done}/${tasks.length})</span></div>`;
-        tasks.forEach(t=>{ html+=`<div class="wk-t ${t.done?'d':''}"><span class="m">${t.done?'✓':'○'}</span> ${esc(t.text)}</div>`;
-          if(!t.done&&t.reason) html+=`<div class="wk-r">⚠ ${esc(t.reason)}</div>`; });
+        tasks.forEach(t=>{
+          const p=pctOf(t), tDone=isDone(t);
+          wCredit+=p/100;
+          html+=`<div class="wk-t ${tDone?'d':''}"><span class="m">${tDone?'✓':'○'}</span> ${esc(t.text)}${!tDone&&p>0?' — '+p+'%':''}</div>`;
+          if(!tDone&&t.reason) html+=`<div class="wk-r">⚠ ${esc(t.reason)}</div>`;
+        });
         html+="</div>";
       }
     });
@@ -189,7 +230,7 @@ async function renderWeek(){
     div.innerHTML=`<h3><span>${DAYNAMES[dt.getDay()]} · ${fmtDate(d)}</span>${ds.total?`<span class="p" style="color:${pctColor(ds.pct)}">${ds.pct}%</span>`:''}</h3>${ds.total?html:'<div class="empty">No tasks recorded</div>'}`;
     wrap.appendChild(div);
   });
-  const pct=wTotal?Math.round(wDone/wTotal*100):0;
+  const pct=wTotal?Math.round(wCredit/wTotal*100):0;
   document.getElementById("weekOverall").innerHTML=`
     <div class="score">${ring(pct,92)}
       <div><div class="lead">Week of ${fmtDate(monday)}</div>
@@ -206,7 +247,7 @@ async function exportPDF(){
   const doc=new jsPDF({unit:"pt",format:"letter"});
   const monday=mondayOf(document.getElementById("weekPicker").value);
   const dates=weekDates(monday);
-  const data={}; let wDone=0,wTotal=0; const blockers=[];
+  const data={}; let wDone=0,wTotal=0,wCredit=0; const blockers=[];
   for(const d of dates) data[d]=await getDay(d);
 
   const pw=doc.internal.pageSize.getWidth(), ph=doc.internal.pageSize.getHeight();
@@ -231,16 +272,18 @@ async function exportPDF(){
     WORKERS.forEach(w=>{
       const tasks=day[w]||[];
       if(tasks.length){
-        any=true; const done=tasks.filter(t=>t.done).length; wDone+=done; wTotal+=tasks.length;
+        any=true; const done=tasks.filter(t=>isDone(t)).length; wDone+=done; wTotal+=tasks.length;
         pageCheck(20); doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(30,30,30);
         doc.text(w+"  ("+done+"/"+tasks.length+")",48,y); y+=15;
         doc.setFont("helvetica","normal"); doc.setFontSize(10);
         tasks.forEach(t=>{
-          pageCheck(15); const mark=t.done?"[X]":"[ ]";
-          doc.setTextColor(t.done?125:40,t.done?125:40,t.done?125:40);
+          const p=pctOf(t), tDone=isDone(t);
+          wCredit+=p/100;
+          pageCheck(15); const mark=tDone?"[X]":(p>0?"["+p+"%]":"[ ]");
+          doc.setTextColor(tDone?125:40,tDone?125:40,tDone?125:40);
           const lines=doc.splitTextToSize(mark+" "+t.text,pw-130); doc.text(lines,60,y); y+=13*lines.length;
-          if(!t.done) blockers.push({d,w,t});
-          if(!t.done&&t.reason){ pageCheck(13); doc.setTextColor(200,120,20);
+          if(!tDone) blockers.push({d,w,t});
+          if(!tDone&&t.reason){ pageCheck(13); doc.setTextColor(200,120,20);
             const rl=doc.splitTextToSize("Reason: "+t.reason,pw-150); doc.text(rl,78,y); y+=12*rl.length; doc.setTextColor(40,40,40); }
         });
         y+=5;
@@ -251,7 +294,7 @@ async function exportPDF(){
   });
 
   pageCheck(46);
-  const pct=wTotal?Math.round(wDone/wTotal*100):0;
+  const pct=wTotal?Math.round(wCredit/wTotal*100):0;
   doc.setDrawColor(200,200,200); doc.line(40,y,pw-40,y); y+=22;
   doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(54,194,106);
   doc.text("Week Completion: "+pct+"%   ("+wDone+"/"+wTotal+" tasks)",40,y); y+=26;
@@ -261,7 +304,9 @@ async function exportPDF(){
     doc.text("Why not 100% — Outstanding items ("+blockers.length+")",40,y); y+=18;
     doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(50,50,50);
     blockers.forEach(({d,w,t})=>{ pageCheck(16);
-      const line="• "+fmtDate(d)+" — "+w+": "+t.text+(t.reason?"  ("+t.reason+")":"  (no reason given)");
+      const p=pctOf(t);
+      const note=[p>0?p+"% done":"",t.reason||"no reason given"].filter(Boolean).join("; ");
+      const line="• "+fmtDate(d)+" — "+w+": "+t.text+"  ("+note+")";
       const ls=doc.splitTextToSize(line,pw-92); doc.text(ls,48,y); y+=13*ls.length+2; });
   } else if(wTotal){
     pageCheck(20); doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(54,194,106);
@@ -299,6 +344,7 @@ daily.addEventListener("click",e=>{
   if(act==="toggle"){ openReason=null; toggle(w,id); }
   else if(act==="del"){ openReason=null; del(w,id); }
   else if(act==="add"){ const inp=el.parentElement.querySelector("input"); addTask(w,inp.value); focusAddInput(w); }
+  else if(act==="setpct"){ setPct(w,id,el.dataset.val); }
   else if(act==="openreason"||act==="editreason"){ openReason=String(id); render();
     const inp=document.querySelector('.why input[data-id="'+id+'"]'); if(inp) inp.focus(); }
 });
@@ -309,6 +355,11 @@ daily.addEventListener("keydown",e=>{
 });
 daily.addEventListener("input",e=>{ if(e.target.matches(".why input")) setReason(e.target.dataset.w,e.target.dataset.id,e.target.value); });
 daily.addEventListener("focusout",e=>{ if(e.target.matches(".why input")){ openReason=null; render(); } });
+/* Tapping a % chip would otherwise steal focus from the reason input first,
+   firing the focusout handler above and collapsing the panel before the
+   chip's own click is processed. Blocking the default mousedown focus-shift
+   keeps the input focused so the click lands on the chip as expected. */
+daily.addEventListener("mousedown",e=>{ if(e.target.closest(".pct-chip")) e.preventDefault(); });
 
 document.getElementById("datePicker").addEventListener("change",e=>{ currentDate=e.target.value||todayStr(); openReason=null; sync(); load(); });
 document.getElementById("prevDay").addEventListener("click",()=>{ currentDate=shiftDay(currentDate,-1); openReason=null; sync(); load(); });
