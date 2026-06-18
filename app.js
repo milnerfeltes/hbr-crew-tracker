@@ -166,10 +166,11 @@ function removeWorker(name){
 
 /* ---------- custom confirm modal (no blocking window.confirm) ---------- */
 let _confirmYes=null;
-function showConfirmModal(title,body,onYes){
+function showConfirmModal(title,body,onYes,yesLabel){
   _confirmYes=onYes;
   document.getElementById("confirmTitle").textContent=title;
   document.getElementById("confirmBody").textContent=body;
+  document.getElementById("confirmYes").textContent=yesLabel||"Remove";
   document.getElementById("confirmOverlay").classList.remove("hidden");
 }
 function hideConfirmModal(){ document.getElementById("confirmOverlay").classList.add("hidden"); _confirmYes=null; }
@@ -255,7 +256,8 @@ function resetAppData(){
       }catch(e){}
       try{ Object.keys(localStorage).filter(k=>k.startsWith("hbr_")).forEach(k=>localStorage.removeItem(k)); }catch(e){}
       location.reload();
-    }
+    },
+    "Erase data"
   );
 }
 
@@ -346,7 +348,8 @@ async function handleImportFile(file){
           if(currentView==="weekly") renderWeek();
           showToast("Backup restored.","success");
         }catch(e){ showToast("Restore failed partway through — check your data.","error"); }
-      }
+      },
+      "Restore"
     );
   }catch(e){ showToast("That file doesn't look like a valid HBR backup.","error"); }
 }
