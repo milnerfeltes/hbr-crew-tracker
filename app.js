@@ -127,11 +127,22 @@ function addWorker(name){
   save(); render();
 }
 function removeWorker(name){
-  if(!confirm(`Remove ${name} from the crew?\n\nThis only takes them off the active list for adding new tasks — every task they've already logged stays saved and still shows up on the days/weeks/PDF reports where it happened.`)) return;
-  WORKERS=WORKERS.filter(w=>w!==name);
-  saveWorkers();
-  render();
+  showConfirmModal(
+    `Remove ${name} from the crew?`,
+    `This only takes them off the active list for adding new tasks — every task they've already logged stays saved and still shows up on the days/weeks/PDF reports where it happened.`,
+    ()=>{ WORKERS=WORKERS.filter(w=>w!==name); saveWorkers(); render(); }
+  );
 }
+
+/* ---------- custom confirm modal (no blocking window.confirm) ---------- */
+let _confirmYes=null;
+function showConfirmModal(title,body,onYes){
+  _confirmYes=onYes;
+  document.getElementById("confirmTitle").textContent=title;
+  document.getElementById("confirmBody").textContent=body;
+  document.getElementById("confirmOverlay").classList.remove("hidden");
+}
+function hideConfirmModal(){ document.getElementById("confirmOverlay").classList.add("hidden"); _confirmYes=null; }
 
 /* ---------- mutations ---------- */
 function addTask(w,text){ if(!text.trim())return; state[w].push({id:newId(),text:text.trim(),pct:0,reason:""}); save(); render(); }
@@ -419,6 +430,9 @@ document.getElementById("nextDay").addEventListener("click",()=>{ currentDate=sh
 document.getElementById("todayBtn").addEventListener("click",()=>{ currentDate=todayStr(); openReason=null; sync(); load(); });
 document.getElementById("weekPicker").addEventListener("change",renderWeek);
 document.getElementById("exportPdf").addEventListener("click",exportPDF);
+document.getElementById("confirmCancel").addEventListener("click",hideConfirmModal);
+document.getElementById("confirmYes").addEventListener("click",()=>{ const fn=_confirmYes; hideConfirmModal(); if(fn) fn(); });
+document.getElementById("confirmOverlay").addEventListener("click",e=>{ if(e.target.id==="confirmOverlay") hideConfirmModal(); });
 
 function sync(){ document.getElementById("datePicker").value=currentDate; }
 
