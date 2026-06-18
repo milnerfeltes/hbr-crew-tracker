@@ -153,15 +153,26 @@ function addWorker(name){
   WORKERS.push(name);
   saveWorkers();
   if(!Array.isArray(state[name])) state[name]=[]; // so today's view/add-task works immediately
-  save(); render();
+  save(); render(); renderCrewList();
   showToast(name+" added to the crew.","success");
 }
 function removeWorker(name){
   showConfirmModal(
     `Remove ${name} from the crew?`,
     `This only takes them off the active list for adding new tasks — every task they've already logged stays saved and still shows up on the days/weeks/PDF reports where it happened.`,
-    ()=>{ WORKERS=WORKERS.filter(w=>w!==name); saveWorkers(); render(); }
+    ()=>{ WORKERS=WORKERS.filter(w=>w!==name); saveWorkers(); render(); renderCrewList(); }
   );
+}
+
+/* Crew list shown inside Settings — a clearly-labeled, dedicated place to add
+   or remove workers (in addition to the inline controls on the Today view),
+   since the inline "+"/"×" controls there are easy to miss. */
+function renderCrewList(){
+  const el=document.getElementById("crewList"); if(!el) return;
+  if(!WORKERS.length){ el.innerHTML='<div class="crew-empty">No crew members yet — add one below.</div>'; return; }
+  el.innerHTML=WORKERS.map(name=>
+    `<div class="crew-row"><div class="cr-name">${esc(name)}</div><button class="cr-remove" data-w="${esc(name)}">Remove</button></div>`
+  ).join("");
 }
 
 /* ---------- custom confirm modal (no blocking window.confirm) ---------- */
@@ -266,6 +277,7 @@ function openSettings(){
   document.getElementById("settingsOverlay").classList.remove("hidden");
   document.getElementById("settingsVersion").textContent="HBR Crew Tracker · v"+APP_VERSION;
   document.getElementById("changePinForm").classList.add("hidden");
+  renderCrewList();
 }
 function closeSettings(){ document.getElementById("settingsOverlay").classList.add("hidden"); }
 
@@ -392,6 +404,52 @@ function ring(pct,size){
     </svg><div class="pc" style="color:${col}">${pct}%</div></div>`;
 }
 
+/* ---------- print a single worker's task list ----------
+   Opens a clean, paper-friendly page in a new tab/window and triggers the
+   browser's print dialog, so a worker can be handed a printed copy. */
+function printWorkerTasks(w){
+  const tasks=state[w]||[];
+  const done=tasks.filter(t=>isDone(t)).length;
+  const rows=tasks.map(t=>{
+    const p=pctOf(t), tDone=isDone(t);
+    const status=tDone?"Done":(p>0?p+"% done":"Not started");
+    return `<tr><td class="pc-check">${tDone?"&#10003;":""}</td><td>${esc(t.text)}</td>
+      <td>${esc(status)}</td><td>${esc(t.reason||"")}</td></tr>`;
+  }).join("");
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>${esc(w)} — ${esc(fmtDate(currentDate))}</title>
+<style>
+  *{box-sizing:border-box;}
+  body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;padding:32px;}
+  .hdr{border-bottom:3px solid #ffb020;padding-bottom:14px;margin-bottom:18px;}
+  .hdr .co{font-weight:800;font-size:20px;letter-spacing:-.01em;}
+  .hdr .sub{color:#555;font-size:13px;margin-top:2px;}
+  h1{font-size:18px;margin:0 0 4px;}
+  .meta{color:#444;font-size:13px;margin-bottom:18px;}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;}
+  th{text-align:left;background:#f0f0f0;padding:8px 10px;border-bottom:2px solid #ccc;font-size:11.5px;
+    text-transform:uppercase;letter-spacing:.04em;color:#555;}
+  td{padding:9px 10px;border-bottom:1px solid #ddd;vertical-align:top;}
+  .pc-check{width:26px;text-align:center;font-weight:700;color:#1a8a3e;}
+  .summary{margin-top:18px;font-size:13.5px;font-weight:700;}
+  .sig{margin-top:54px;display:flex;gap:40px;}
+  .sig div{flex:1;border-top:1px solid #999;padding-top:6px;font-size:12px;color:#555;}
+  @media print{ body{padding:18px;} }
+</style></head><body>
+<div class="hdr"><div class="co">Hampton Bays Remodeling Corp.</div><div class="sub">Daily Task List</div></div>
+<h1>${esc(w)}</h1>
+<div class="meta">${esc(fmtDate(currentDate))}</div>
+<table><thead><tr><th></th><th>Task</th><th>Status</th><th>Notes</th></tr></thead>
+<tbody>${rows||'<tr><td colspan="4" style="color:#888;font-style:italic;">No tasks logged for this day.</td></tr>'}</tbody></table>
+<div class="summary">${done} of ${tasks.length} tasks complete</div>
+<div class="sig"><div>Worker signature</div><div>Date</div></div>
+</body></html>`;
+  const win=window.open("","_blank");
+  if(!win){ showToast("Pop-up blocked — allow pop-ups to print.","warn"); return; }
+  win.document.open(); win.document.write(html); win.document.close();
+  setTimeout(()=>{ try{ win.focus(); win.print(); }catch(e){} },300);
+}
+
 /* ---------- render daily ---------- */
 function render(){
   const s=stats(state);
@@ -404,7 +462,7 @@ function render(){
     </div>`;
 
   const wrap=document.getElementById("workers"); wrap.innerHTML="";
-  const PRESETS=[100,90,80,70,50,25,0];
+  const PCT_STEPS=[]; for(let v=100;v>=0;v-=5) PCT_STEPS.push(v);
   dayWorkers(state).forEach(w=>{
     const isActive=WORKERS.includes(w);
     const tasks=state[w]||[];
@@ -416,6 +474,7 @@ function render(){
       <div class="w-head"><div class="w-name">${esc(w)}${isActive?'':'<span class="w-archived">Removed</span>'}</div>
         <div class="w-right">
           <div class="w-pct" style="color:${tasks.length?col:'#8b95a3'}">${pct}% · ${done}/${tasks.length}</div>
+          ${tasks.length?`<div class="w-print" data-w="${esc(w)}" data-act="print">Print</div>`:''}
           ${isActive?`<div class="w-remove" data-w="${esc(w)}" data-act="removeworker">×</div>`:''}
         </div></div>
       <div class="track"><i style="width:${pct}%;background:${col}"></i></div>
@@ -426,8 +485,10 @@ function render(){
           let why="";
           if(!tDone){
             if(open){
-              const chips=PRESETS.map(v=>`<button class="pct-chip ${p===v?'active':''}" data-w="${esc(w)}" data-id="${t.id}" data-act="setpct" data-val="${v}">${v}%</button>`).join("");
-              why=`<div class="why"><div class="pct-row">${chips}</div><input data-w="${esc(w)}" data-id="${t.id}" data-act="reason" maxlength="${MAX_REASON_LEN}" placeholder="Why isn't this done? (materials, weather, client…)" value="${esc(t.reason)}"></div>`;
+              const rows=PCT_STEPS.map(v=>`<div class="pct-table-row ${p===v?'active':''}" data-w="${esc(w)}" data-id="${t.id}" data-act="setpct" data-val="${v}">
+                  <div class="ptr-bar"><i style="width:${v}%;background:${pctColor(v)}"></i></div>
+                  <div class="ptr-val">${v}%</div></div>`).join("");
+              why=`<div class="why"><div class="pct-table-label">Scroll to set % complete</div><div class="pct-table">${rows}</div><input data-w="${esc(w)}" data-id="${t.id}" data-act="reason" maxlength="${MAX_REASON_LEN}" placeholder="Why isn't this done? (materials, weather, client…)" value="${esc(t.reason)}"></div>`;
             } else {
               const parts=[]; if(p>0) parts.push(p+"% done"); if(t.reason) parts.push(t.reason);
               if(parts.length) why=`<div class="why-tag" data-w="${esc(w)}" data-id="${t.id}" data-act="editreason">⚠ ${esc(parts.join(" — "))}</div>`;
@@ -447,6 +508,13 @@ function render(){
   const addWorkerDiv=document.createElement("div"); addWorkerDiv.className="add-worker";
   addWorkerDiv.innerHTML=`<input type="text" id="newWorkerName" placeholder="Add crew member…" maxlength="${MAX_NAME_LEN}"><button data-act="addworker">+</button>`;
   wrap.appendChild(addWorkerDiv);
+  // Scroll the open %-table so the currently-set value is in view, without
+  // jumping the whole page (manual scrollTop on the small inner container).
+  const activeRow=wrap.querySelector(".pct-table-row.active");
+  if(activeRow){
+    const tbl=activeRow.closest(".pct-table");
+    if(tbl) tbl.scrollTop=activeRow.offsetTop-tbl.clientHeight/2+activeRow.clientHeight/2;
+  }
   renderBlockers();
   updateSaveStatus();
 }
@@ -623,6 +691,7 @@ daily.addEventListener("click",e=>{
     const inp=document.querySelector('.why input[data-id="'+id+'"]'); if(inp) inp.focus(); }
   else if(act==="addworker"){ const inp=document.getElementById("newWorkerName"); addWorker(inp.value); focusNewWorkerInput(); }
   else if(act==="removeworker"){ removeWorker(w); }
+  else if(act==="print"){ printWorkerTasks(w); }
 });
 daily.addEventListener("keydown",e=>{
   if(e.key!=="Enter")return;
@@ -636,7 +705,7 @@ daily.addEventListener("focusout",e=>{ if(e.target.matches(".why input")){ openR
    firing the focusout handler above and collapsing the panel before the
    chip's own click is processed. Blocking the default mousedown focus-shift
    keeps the input focused so the click lands on the chip as expected. */
-daily.addEventListener("mousedown",e=>{ if(e.target.closest(".pct-chip")) e.preventDefault(); });
+daily.addEventListener("mousedown",e=>{ if(e.target.closest(".pct-chip,.pct-table-row")) e.preventDefault(); });
 
 document.getElementById("datePicker").addEventListener("change",e=>{ currentDate=e.target.value||todayStr(); openReason=null; sync(); load(); });
 document.getElementById("prevDay").addEventListener("click",()=>{ currentDate=shiftDay(currentDate,-1); openReason=null; sync(); load(); });
@@ -659,6 +728,15 @@ document.getElementById("exportBackupBtn").addEventListener("click",exportBackup
 document.getElementById("importBackupBtn").addEventListener("click",triggerImport);
 document.getElementById("importFile").addEventListener("change",e=>{ handleImportFile(e.target.files[0]); e.target.value=""; });
 document.getElementById("resetAppBtn").addEventListener("click",resetAppData);
+document.getElementById("crewAddBtn").addEventListener("click",()=>{
+  const inp=document.getElementById("crewAddName"); addWorker(inp.value); inp.value=""; inp.focus();
+});
+document.getElementById("crewAddName").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){ const inp=e.target; addWorker(inp.value); inp.value=""; inp.focus(); }
+});
+document.getElementById("crewList").addEventListener("click",e=>{
+  const btn=e.target.closest(".cr-remove"); if(btn) removeWorker(btn.dataset.w);
+});
 document.getElementById("pinSetupBtn").addEventListener("click",submitPinSetup);
 document.getElementById("pinUnlockBtn").addEventListener("click",submitPinUnlock);
 document.getElementById("pinForgot").addEventListener("click",resetAppData);

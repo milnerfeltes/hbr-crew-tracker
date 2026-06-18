@@ -61,6 +61,10 @@
   .w-pct{font-family:'Archivo';font-weight:800;font-size:14px;}
   .w-remove{color:var(--mut);font-size:19px;line-height:1;padding:2px 7px;border-radius:7px;cursor:pointer;}
   .w-remove:active{background:var(--panel2);color:var(--red);}
+  .w-print{color:var(--ink);font-size:11px;font-weight:700;font-family:'Archivo';letter-spacing:.04em;
+    text-transform:uppercase;padding:6px 9px;border-radius:7px;cursor:pointer;border:1px solid var(--line);
+    background:var(--panel2);}
+  .w-print:active{background:var(--panel);}
   .w-archived{display:inline-block;margin-left:9px;font-size:10.5px;font-weight:700;letter-spacing:.08em;
     text-transform:uppercase;color:var(--mut);background:var(--panel2);border:1px solid var(--line);
     border-radius:6px;padding:2px 7px;vertical-align:middle;}
@@ -85,6 +89,22 @@
   .pct-chip{background:var(--panel2);color:var(--ink);border:1px solid var(--line);padding:7px 12px;
     border-radius:20px;font-size:13px;font-family:'Archivo';font-weight:700;cursor:pointer;}
   .pct-chip.active{background:var(--amber);color:#1a1205;border-color:var(--amber);}
+
+  /* scrollable % completion table — manual entry, 5% increments, tap a row */
+  .pct-table-label{margin:0 0 5px 43px;font-size:11.5px;color:var(--mut);text-transform:uppercase;
+    letter-spacing:.08em;font-family:'Archivo';font-weight:700;}
+  .pct-table{margin:0 0 9px 43px;max-height:168px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    border:1px solid var(--line);border-radius:10px;background:var(--panel2);}
+  .pct-table-row{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;
+    border-bottom:1px solid var(--line);}
+  .pct-table-row:last-child{border-bottom:none;}
+  .pct-table-row .ptr-bar{flex:1;height:6px;border-radius:6px;background:var(--panel);overflow:hidden;}
+  .pct-table-row .ptr-bar i{display:block;height:100%;border-radius:6px;}
+  .pct-table-row .ptr-val{width:42px;text-align:right;font-family:'Archivo';font-weight:800;font-size:13.5px;
+    flex-shrink:0;}
+  .pct-table-row.active{background:#2a2310;}
+  .pct-table-row.active .ptr-val{color:var(--amber);}
+  .pct-table-row:active{background:var(--panel);}
   .add{display:flex;gap:9px;padding:11px 10px 4px;}
   .add input{flex:1;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
     padding:12px 13px;border-radius:10px;font-size:15px;font-family:inherit;}
@@ -172,6 +192,22 @@
   .settings-btn.danger{background:#2a1414;color:#ff8a8a;border-color:#4a1f1f;}
   .settings-version{text-align:center;font-size:11px;color:var(--mut);margin:6px 0 14px;}
 
+  /* crew management list inside Settings */
+  .crew-list{margin-bottom:10px;}
+  .crew-row{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:10px 12px;margin-bottom:7px;}
+  .crew-row .cr-name{font-size:14px;font-weight:600;}
+  .crew-row .cr-remove{background:none;border:1px solid var(--line);color:var(--red);
+    font-family:'Archivo';font-weight:700;font-size:12px;padding:6px 10px;border-radius:8px;cursor:pointer;
+    flex-shrink:0;}
+  .crew-empty{font-size:13px;color:var(--mut);padding:4px 2px 10px;}
+  .crew-add-row{display:flex;gap:8px;}
+  .crew-add-row input{flex:1;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    padding:11px 13px;border-radius:10px;font-size:14px;font-family:inherit;}
+  .crew-add-row button{background:var(--amber);color:#1a1205;border:none;padding:0 16px;border-radius:10px;
+    font-family:'Archivo';font-weight:700;font-size:13px;cursor:pointer;}
+
   /* toast */
   .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#1f2530;
     color:var(--ink);border:1px solid var(--line);padding:12px 18px;border-radius:12px;font-size:13.5px;
@@ -212,7 +248,7 @@
   <div id="workers"><div class="loading">Loading…</div></div>
   <div id="blockers"></div>
   <div id="saveStatus" class="status"></div>
-  <div class="foot">Tap a task name to set a % done and log why it isn't finished. Add or remove crew below — removing someone keeps all their past data. Use ⚙ Settings to back up your data or change your PIN. Everything saves on this phone — works offline.</div>
+  <div class="foot">Tap a task name to scroll-pick a % done and log why it isn't finished. Add or remove crew below, or under ⚙ Settings → Crew — removing someone keeps all their past data. Tap "Print" on a worker to hand them a paper copy. Use ⚙ Settings to back up your data or change your PIN. Everything saves on this phone — works offline.</div>
 </div>
 
 <div id="weeklyView" class="hidden">
@@ -271,6 +307,15 @@
         <input id="cpNew2" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Confirm new PIN" class="pin-input">
         <div id="cpError" class="lock-error"></div>
         <button class="settings-btn primary" id="cpSubmit">Save new PIN</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">Crew</div>
+      <div id="crewList" class="crew-list"></div>
+      <div class="crew-add-row">
+        <input type="text" id="crewAddName" placeholder="Add crew member…" maxlength="40">
+        <button id="crewAddBtn">Add</button>
       </div>
     </div>
 
