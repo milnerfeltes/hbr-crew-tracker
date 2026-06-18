@@ -134,12 +134,18 @@
     padding:14px 16px;font-size:13px;color:#cfe0ff;display:flex;gap:12px;align-items:flex-start;}
   .install b{color:#fff;} .install .dismiss{margin-left:auto;color:var(--mut);font-size:20px;cursor:pointer;flex-shrink:0;}
 
-  /* custom confirm modal — replaces blocking window.confirm() */
+  /* gear / settings trigger */
+  .gear{background:none;border:none;color:var(--mut);font-size:17px;cursor:pointer;padding:2px 4px;line-height:1;margin-left:10px;}
+  .gear:active{color:var(--ink);}
+
+  /* custom overlay system — replaces blocking window.confirm()/prompt() */
   .confirm-overlay{position:fixed;inset:0;background:rgba(8,10,14,.65);display:flex;align-items:center;
-    justify-content:center;z-index:50;padding:24px;}
+    justify-content:center;z-index:100;padding:24px;}
   .confirm-overlay.hidden{display:none;}
+  .confirm-overlay.lock-overlay{z-index:80;background:#0c0f14;}
+  .confirm-overlay.settings-overlay{z-index:70;}
   .confirm-box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;
-    max-width:340px;width:100%;}
+    max-width:340px;width:100%;max-height:88vh;overflow-y:auto;}
   .confirm-title{font-family:'Archivo';font-weight:800;font-size:16px;margin-bottom:8px;}
   .confirm-body{font-size:13.5px;color:var(--mut);line-height:1.5;margin-bottom:18px;}
   .confirm-actions{display:flex;gap:10px;}
@@ -147,6 +153,34 @@
     font-size:14px;cursor:pointer;}
   .confirm-btn.cancel{background:var(--panel2);color:var(--ink);}
   .confirm-btn.yes{background:var(--red);color:#fff;}
+
+  /* PIN inputs (lock screen + change-PIN form) */
+  .pin-input{display:block;width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    padding:12px 13px;border-radius:10px;font-size:18px;font-family:inherit;letter-spacing:.2em;text-align:center;
+    margin-bottom:10px;}
+  .lock-error{color:var(--red);font-size:13px;margin-top:6px;min-height:16px;}
+  .lock-forgot{margin-top:14px;text-align:center;font-size:12.5px;color:var(--mut);text-decoration:underline;cursor:pointer;}
+
+  /* settings panel */
+  .settings-section{margin:14px 0;}
+  .settings-label{font-family:'Archivo';font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--mut);margin-bottom:8px;}
+  .settings-btn{display:block;width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    padding:11px 13px;border-radius:10px;font-size:14px;font-family:'Archivo';font-weight:700;cursor:pointer;
+    margin-bottom:8px;text-align:left;}
+  .settings-btn.primary{background:var(--amber);color:#1a1205;border-color:var(--amber);}
+  .settings-btn.danger{background:#2a1414;color:#ff8a8a;border-color:#4a1f1f;}
+  .settings-version{text-align:center;font-size:11px;color:var(--mut);margin:6px 0 14px;}
+
+  /* toast */
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#1f2530;
+    color:var(--ink);border:1px solid var(--line);padding:12px 18px;border-radius:12px;font-size:13.5px;
+    max-width:86%;text-align:center;z-index:120;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;
+    box-shadow:0 8px 24px rgba(0,0,0,.35);}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  .toast.success{border-color:var(--green);}
+  .toast.warn{border-color:var(--amber);}
+  .toast.error{border-color:var(--red);}
 </style>
 </head>
 <body>
@@ -154,6 +188,7 @@
   <div class="brand">
     <div class="mark">HAMPTON BAYS<span>.</span></div>
     <div class="sub">Crew Tracker</div>
+    <button id="settingsBtn" class="gear" aria-label="Settings" title="Settings">⚙</button>
   </div>
 </div>
 <div class="tabs">
@@ -177,7 +212,7 @@
   <div id="workers"><div class="loading">Loading…</div></div>
   <div id="blockers"></div>
   <div id="saveStatus" class="status"></div>
-  <div class="foot">Tap a task name to set a % done and log why it isn't finished. Add or remove crew below — removing someone keeps all their past data. Everything saves on this phone — works offline.</div>
+  <div class="foot">Tap a task name to set a % done and log why it isn't finished. Add or remove crew below — removing someone keeps all their past data. Use ⚙ Settings to back up your data or change your PIN. Everything saves on this phone — works offline.</div>
 </div>
 
 <div id="weeklyView" class="hidden">
@@ -201,6 +236,62 @@
     </div>
   </div>
 </div>
+
+<div id="lockOverlay" class="confirm-overlay lock-overlay hidden">
+  <div class="confirm-box">
+    <div id="lockSetup">
+      <div class="confirm-title">Set a PIN for this device</div>
+      <div class="confirm-body">Choose a 4–8 digit PIN. You'll need it to open the tracker here next time. If you forget it, recovering access erases this device's saved data — so keep it somewhere safe.</div>
+      <input id="pinNew" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="New PIN" class="pin-input">
+      <input id="pinNew2" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Confirm PIN" class="pin-input">
+      <div class="confirm-actions"><button id="pinSetupBtn" class="confirm-btn yes" style="background:var(--amber);color:#1a1205;">Set PIN</button></div>
+    </div>
+    <div id="lockUnlock" class="hidden">
+      <div class="confirm-title">Enter PIN</div>
+      <div class="confirm-body">This device is locked. Enter the PIN to open the tracker.</div>
+      <input id="pinEnter" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" class="pin-input">
+      <div class="confirm-actions"><button id="pinUnlockBtn" class="confirm-btn yes" style="background:var(--amber);color:#1a1205;">Unlock</button></div>
+      <div class="lock-forgot" id="pinForgot">Forgot PIN? Reset this device</div>
+    </div>
+    <div id="lockError" class="lock-error"></div>
+  </div>
+</div>
+
+<div id="settingsOverlay" class="confirm-overlay settings-overlay hidden">
+  <div class="confirm-box" style="text-align:left;">
+    <div class="confirm-title">Settings</div>
+
+    <div class="settings-section">
+      <div class="settings-label">Security</div>
+      <button class="settings-btn" id="changePinBtn">Change PIN</button>
+      <button class="settings-btn" id="lockNowBtn">Lock now</button>
+      <div id="changePinForm" class="hidden">
+        <input id="cpCurrent" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Current PIN" class="pin-input">
+        <input id="cpNew" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="New PIN" class="pin-input">
+        <input id="cpNew2" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Confirm new PIN" class="pin-input">
+        <div id="cpError" class="lock-error"></div>
+        <button class="settings-btn primary" id="cpSubmit">Save new PIN</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">Backup &amp; restore</div>
+      <button class="settings-btn" id="exportBackupBtn">Export backup (.json)</button>
+      <button class="settings-btn" id="importBackupBtn">Import backup…</button>
+      <input type="file" id="importFile" accept="application/json" class="hidden">
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">Danger zone</div>
+      <button class="settings-btn danger" id="resetAppBtn">Erase all data on this device</button>
+    </div>
+
+    <div id="settingsVersion" class="settings-version"></div>
+    <div class="confirm-actions"><button id="settingsClose" class="confirm-btn cancel">Close</button></div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="app.js"></script>

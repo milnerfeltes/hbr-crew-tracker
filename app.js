@@ -9,6 +9,22 @@ let currentDate = todayStr();
 let currentView = "daily";
 let openReason = null;
 let storageOK = true;
+let isUnlocked = false;
+const APP_VERSION = "1.1.0";
+const MAX_NAME_LEN = 40, MAX_TASK_LEN = 200, MAX_REASON_LEN = 200;
+
+/* ---------- global error safety net ----------
+   Catches anything unexpected so the user sees a calm message instead of a
+   silently broken UI, and is reassured their saved data isn't touched by it. */
+let _lastErrToast = 0;
+function _globalErrToast(){
+  const now = Date.now();
+  if (now - _lastErrToast < 5000) return; // don't spam if several fire at once
+  _lastErrToast = now;
+  showToast("Something went wrong, but your saved data is safe. Try reloading.", "error");
+}
+window.addEventListener("error", _globalErrToast);
+window.addEventListener("unhandledrejection", _globalErrToast);
 
 /* ---------- date helpers ---------- */
 function toLocalStr(d){ const o=d.getTimezoneOffset(); return new Date(d-o*60000).toISOString().slice(0,10); }
@@ -26,6 +42,15 @@ function mondayOf(dateStr){
   const day=d.getDay(), diff=(day===0?-6:1-day); d.setDate(d.getDate()+diff); return toLocalStr(d);
 }
 function weekDates(monday){ const arr=[],d=new Date(monday+"T00:00:00"); for(let i=0;i<7;i++){arr.push(toLocalStr(d));d.setDate(d.getDate()+1);} return arr; }
+
+/* ---------- toast (lightweight, non-blocking feedback) ---------- */
+let _toastTimer=null;
+function showToast(msg,type){
+  const el=document.getElementById("toast"); if(!el) return;
+  el.textContent=msg; el.className="toast show "+(type||"");
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>{ el.className="toast "+(type||""); },3200);
+}
 
 /* ---------- IndexedDB layer ---------- */
 const DB_NAME="hbr_tracker", STORE="days", DB_VER=1;
@@ -97,12 +122,14 @@ async function getDay(d){
   return normalize({});
 }
 async function save(){
+  const prevOK=storageOK;
   try{
     await idbSet(currentDate, JSON.parse(JSON.stringify(state)));
     storageOK=true;
   }catch(e){
     storageOK = lsSet(currentDate, state); // try localStorage, else memory
   }
+  if(prevOK && !storageOK) showToast("Couldn't save automatically — export a PDF backup soon.","error");
   updateSaveStatus();
 }
 async function load(){ state=await getDay(currentDate); render(); }
@@ -119,12 +146,15 @@ async function saveWorkers(){
   catch(e){ lsSet(WORKERS_KEY, WORKERS.slice()); }
 }
 function addWorker(name){
-  name=(name||"").trim(); if(!name) return;
-  if(WORKERS.some(w=>w.toLowerCase()===name.toLowerCase())) return; // already on the crew
+  name=(name||"").trim();
+  if(!name){ showToast("Enter a name first.","warn"); return; }
+  if(name.length>MAX_NAME_LEN){ showToast("Name is too long (max "+MAX_NAME_LEN+" characters).","warn"); return; }
+  if(WORKERS.some(w=>w.toLowerCase()===name.toLowerCase())){ showToast(name+" is already on the crew.","warn"); return; }
   WORKERS.push(name);
   saveWorkers();
   if(!Array.isArray(state[name])) state[name]=[]; // so today's view/add-task works immediately
   save(); render();
+  showToast(name+" added to the crew.","success");
 }
 function removeWorker(name){
   showConfirmModal(
@@ -144,11 +174,192 @@ function showConfirmModal(title,body,onYes){
 }
 function hideConfirmModal(){ document.getElementById("confirmOverlay").classList.add("hidden"); _confirmYes=null; }
 
+/* ---------- PIN lock (per-device passcode gate) ----------
+   This is a UI-level deterrent against casual access on a shared device —
+   it does not encrypt the underlying data. Losing the PIN means the only
+   way back in is the "forgot PIN" reset, which erases this device's data. */
+const PIN_KEY="hbr_pin_hash";
+async function sha256Hex(str){
+  const buf=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function getPinHash(){ try{ return localStorage.getItem(PIN_KEY); }catch(e){ return null; } }
+function setPinHash(hash){ try{ localStorage.setItem(PIN_KEY,hash); return true; }catch(e){ return false; } }
+
+let _pinFailCount=0, _pinLockedUntil=0;
+
+function showLockOverlay(){ document.getElementById("lockOverlay").classList.remove("hidden"); }
+function hideLockOverlay(){ document.getElementById("lockOverlay").classList.add("hidden"); isUnlocked=true; }
+
+function initLock(){
+  showLockMode(getPinHash() ? "unlock" : "setup");
+  showLockOverlay();
+}
+
+function showLockMode(mode){
+  document.getElementById("lockSetup").classList.toggle("hidden", mode!=="setup");
+  document.getElementById("lockUnlock").classList.toggle("hidden", mode!=="unlock");
+  document.getElementById("lockError").textContent="";
+  if(mode==="setup"){
+    document.getElementById("pinNew").value=""; document.getElementById("pinNew2").value="";
+    setTimeout(()=>document.getElementById("pinNew").focus(),50);
+  } else {
+    document.getElementById("pinEnter").value="";
+    setTimeout(()=>document.getElementById("pinEnter").focus(),50);
+  }
+}
+
+async function submitPinSetup(){
+  const a=document.getElementById("pinNew").value.trim();
+  const b=document.getElementById("pinNew2").value.trim();
+  const err=document.getElementById("lockError");
+  if(!/^\d{4,8}$/.test(a)){ err.textContent="PIN must be 4–8 digits."; return; }
+  if(a!==b){ err.textContent="PINs don't match — try again."; return; }
+  setPinHash(await sha256Hex(a));
+  hideLockOverlay();
+  showToast("PIN set. You'll need it next time you open the tracker here.","success");
+}
+
+async function submitPinUnlock(){
+  const now=Date.now();
+  if(now<_pinLockedUntil){
+    document.getElementById("lockError").textContent="Too many tries — wait a few seconds and try again.";
+    return;
+  }
+  const v=document.getElementById("pinEnter").value.trim();
+  const hash=await sha256Hex(v);
+  if(hash===getPinHash()){
+    _pinFailCount=0;
+    hideLockOverlay();
+  } else {
+    _pinFailCount++;
+    document.getElementById("pinEnter").value="";
+    document.getElementById("pinEnter").focus();
+    if(_pinFailCount>=5){
+      _pinLockedUntil=now+10000; _pinFailCount=0;
+      document.getElementById("lockError").textContent="Too many wrong tries — wait 10 seconds.";
+    } else {
+      document.getElementById("lockError").textContent="Incorrect PIN — try again.";
+    }
+  }
+}
+
+function resetAppData(){
+  showConfirmModal(
+    "Erase all data on this device?",
+    "This deletes every saved day, the crew roster, and the PIN itself — use this only if you've forgotten the PIN. This cannot be undone. Export a backup first if you can.",
+    async ()=>{
+      try{
+        const db=await openDB();
+        await new Promise((res)=>{ const tx=db.transaction(STORE,"readwrite"); tx.objectStore(STORE).clear(); tx.oncomplete=res; tx.onerror=res; tx.onabort=res; });
+      }catch(e){}
+      try{ Object.keys(localStorage).filter(k=>k.startsWith("hbr_")).forEach(k=>localStorage.removeItem(k)); }catch(e){}
+      location.reload();
+    }
+  );
+}
+
+/* ---------- settings panel ---------- */
+function openSettings(){
+  document.getElementById("settingsOverlay").classList.remove("hidden");
+  document.getElementById("settingsVersion").textContent="HBR Crew Tracker · v"+APP_VERSION;
+  document.getElementById("changePinForm").classList.add("hidden");
+}
+function closeSettings(){ document.getElementById("settingsOverlay").classList.add("hidden"); }
+
+function openChangePin(){
+  document.getElementById("changePinForm").classList.remove("hidden");
+  ["cpCurrent","cpNew","cpNew2"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("cpError").textContent="";
+  setTimeout(()=>document.getElementById("cpCurrent").focus(),50);
+}
+
+async function submitChangePin(){
+  const cur=document.getElementById("cpCurrent").value.trim();
+  const a=document.getElementById("cpNew").value.trim();
+  const b=document.getElementById("cpNew2").value.trim();
+  const err=document.getElementById("cpError");
+  const curHash=await sha256Hex(cur);
+  if(curHash!==getPinHash()){ err.textContent="Current PIN is incorrect."; return; }
+  if(!/^\d{4,8}$/.test(a)){ err.textContent="New PIN must be 4–8 digits."; return; }
+  if(a!==b){ err.textContent="New PINs don't match."; return; }
+  setPinHash(await sha256Hex(a));
+  document.getElementById("changePinForm").classList.add("hidden");
+  showToast("PIN updated.","success");
+}
+
+function lockNow(){
+  closeSettings();
+  isUnlocked=false;
+  showLockMode("unlock");
+  showLockOverlay();
+}
+
+/* ---------- backup / restore ---------- */
+async function exportBackup(){
+  try{
+    let all={}; try{ all=await idbAll(); }catch(e){}
+    const days={...all}; const workersFromIdb=days[WORKERS_KEY]; delete days[WORKERS_KEY];
+    // also sweep localStorage for any day records IDB might be missing (private-mode fallback)
+    try{
+      Object.keys(localStorage).forEach(k=>{
+        if(k.startsWith("hbr_") && k!=="hbr_pin_hash" && k!=="hbr_install_dismissed"){
+          const day=k.slice(4);
+          if(day!=="__workers__" && !(day in days)){
+            const v=lsGet(day); if(v) days[day]=v;
+          }
+        }
+      });
+    }catch(e){}
+    const payload={ app:"hbr-crew-tracker", version:1, exportedAt:new Date().toISOString(),
+      workers: Array.isArray(workersFromIdb)&&workersFromIdb.length? workersFromIdb : WORKERS, days };
+    const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+    const fname="HBR_Backup_"+todayStr()+".json";
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a"); a.href=url; a.download=fname; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },1000);
+    showToast("Backup exported — check your downloads.","success");
+  }catch(e){ showToast("Couldn't create the backup file.","error"); }
+}
+
+function triggerImport(){ document.getElementById("importFile").click(); }
+
+async function handleImportFile(file){
+  if(!file) return;
+  try{
+    const text=await file.text();
+    const data=JSON.parse(text);
+    if(!data || typeof data.days!=="object" || !Array.isArray(data.workers)) throw new Error("bad shape");
+    const dayCount=Object.keys(data.days).length;
+    showConfirmModal(
+      "Restore this backup?",
+      "This will overwrite the crew roster and any matching dates ("+dayCount+" day"+(dayCount===1?"":"s")+") with data from this file"+(data.exportedAt?(" (exported "+new Date(data.exportedAt).toLocaleDateString()+")"):"")+". Days not in the file are left as-is.",
+      async ()=>{
+        try{
+          for(const [d,rec] of Object.entries(data.days)){
+            const clean=normalize(JSON.parse(JSON.stringify(rec)));
+            try{ await idbSet(d,clean); }catch(e){ lsSet(d,clean); }
+          }
+          const cleanWorkers=[...new Set(data.workers.map(w=>String(w).trim()).filter(Boolean))];
+          if(cleanWorkers.length){ WORKERS=cleanWorkers; await saveWorkers(); }
+          await load();
+          if(currentView==="weekly") renderWeek();
+          showToast("Backup restored.","success");
+        }catch(e){ showToast("Restore failed partway through — check your data.","error"); }
+      }
+    );
+  }catch(e){ showToast("That file doesn't look like a valid HBR backup.","error"); }
+}
+
 /* ---------- mutations ---------- */
-function addTask(w,text){ if(!text.trim())return; state[w].push({id:newId(),text:text.trim(),pct:0,reason:""}); save(); render(); }
+function addTask(w,text){
+  text=(text||"").trim(); if(!text) return;
+  if(text.length>MAX_TASK_LEN){ showToast("Task text is too long (max "+MAX_TASK_LEN+" characters).","warn"); return; }
+  state[w].push({id:newId(),text,pct:0,reason:""}); save(); render();
+}
 function toggle(w,id){ const t=state[w].find(x=>String(x.id)===String(id)); if(t){ t.pct=isDone(t)?0:100; if(t.pct===100) t.reason=""; } save(); render(); }
 function del(w,id){ state[w]=state[w].filter(x=>String(x.id)!==String(id)); save(); render(); }
-function setReason(w,id,v){ const t=state[w].find(x=>String(x.id)===String(id)); if(t) t.reason=v; save(); }
+function setReason(w,id,v){ const t=state[w].find(x=>String(x.id)===String(id)); if(t) t.reason=String(v).slice(0,MAX_REASON_LEN); save(); }
 function setPct(w,id,val){
   const t=state[w].find(x=>String(x.id)===String(id)); if(!t) return;
   val=Math.max(0,Math.min(100,Math.round(Number(val)||0)));
@@ -213,7 +424,7 @@ function render(){
           if(!tDone){
             if(open){
               const chips=PRESETS.map(v=>`<button class="pct-chip ${p===v?'active':''}" data-w="${esc(w)}" data-id="${t.id}" data-act="setpct" data-val="${v}">${v}%</button>`).join("");
-              why=`<div class="why"><div class="pct-row">${chips}</div><input data-w="${esc(w)}" data-id="${t.id}" data-act="reason" placeholder="Why isn't this done? (materials, weather, client…)" value="${esc(t.reason)}"></div>`;
+              why=`<div class="why"><div class="pct-row">${chips}</div><input data-w="${esc(w)}" data-id="${t.id}" data-act="reason" maxlength="${MAX_REASON_LEN}" placeholder="Why isn't this done? (materials, weather, client…)" value="${esc(t.reason)}"></div>`;
             } else {
               const parts=[]; if(p>0) parts.push(p+"% done"); if(t.reason) parts.push(t.reason);
               if(parts.length) why=`<div class="why-tag" data-w="${esc(w)}" data-id="${t.id}" data-act="editreason">⚠ ${esc(parts.join(" — "))}</div>`;
@@ -226,12 +437,12 @@ function render(){
               <div class="x" data-w="${esc(w)}" data-id="${t.id}" data-act="del">×</div>
             </div>${why}</div>`;
         }).join("")}
-        ${isActive?`<div class="add"><input type="text" placeholder="Add task for ${esc(w.split(' ')[0])}…" data-w="${esc(w)}"><button data-w="${esc(w)}" data-act="add">+</button></div>`:''}
+        ${isActive?`<div class="add"><input type="text" placeholder="Add task for ${esc(w.split(' ')[0])}…" maxlength="${MAX_TASK_LEN}" data-w="${esc(w)}"><button data-w="${esc(w)}" data-act="add">+</button></div>`:''}
       </div>`;
     wrap.appendChild(div);
   });
   const addWorkerDiv=document.createElement("div"); addWorkerDiv.className="add-worker";
-  addWorkerDiv.innerHTML=`<input type="text" id="newWorkerName" placeholder="Add crew member…"><button data-act="addworker">+</button>`;
+  addWorkerDiv.innerHTML=`<input type="text" id="newWorkerName" placeholder="Add crew member…" maxlength="${MAX_NAME_LEN}"><button data-act="addworker">+</button>`;
   wrap.appendChild(addWorkerDiv);
   renderBlockers();
   updateSaveStatus();
@@ -299,7 +510,7 @@ async function renderWeek(){
 
 /* ---------- PDF ---------- */
 async function exportPDF(){
-  if(!window.jspdf){ alert("Report tool still loading — try again in a moment."); return; }
+  if(!window.jspdf){ showToast("Report tool still loading — try again in a moment.","warn"); return; }
   const { jsPDF }=window.jspdf;
   const doc=new jsPDF({unit:"pt",format:"letter"});
   const monday=mondayOf(document.getElementById("weekPicker").value);
@@ -434,6 +645,27 @@ document.getElementById("confirmCancel").addEventListener("click",hideConfirmMod
 document.getElementById("confirmYes").addEventListener("click",()=>{ const fn=_confirmYes; hideConfirmModal(); if(fn) fn(); });
 document.getElementById("confirmOverlay").addEventListener("click",e=>{ if(e.target.id==="confirmOverlay") hideConfirmModal(); });
 
+/* settings + PIN lock wiring */
+document.getElementById("settingsBtn").addEventListener("click",openSettings);
+document.getElementById("settingsClose").addEventListener("click",closeSettings);
+document.getElementById("settingsOverlay").addEventListener("click",e=>{ if(e.target.id==="settingsOverlay") closeSettings(); });
+document.getElementById("changePinBtn").addEventListener("click",openChangePin);
+document.getElementById("cpSubmit").addEventListener("click",submitChangePin);
+document.getElementById("lockNowBtn").addEventListener("click",lockNow);
+document.getElementById("exportBackupBtn").addEventListener("click",exportBackup);
+document.getElementById("importBackupBtn").addEventListener("click",triggerImport);
+document.getElementById("importFile").addEventListener("change",e=>{ handleImportFile(e.target.files[0]); e.target.value=""; });
+document.getElementById("resetAppBtn").addEventListener("click",resetAppData);
+document.getElementById("pinSetupBtn").addEventListener("click",submitPinSetup);
+document.getElementById("pinUnlockBtn").addEventListener("click",submitPinUnlock);
+document.getElementById("pinForgot").addEventListener("click",resetAppData);
+document.getElementById("pinNew2").addEventListener("keydown",e=>{ if(e.key==="Enter") submitPinSetup(); });
+document.getElementById("pinEnter").addEventListener("keydown",e=>{ if(e.key==="Enter") submitPinUnlock(); });
+document.getElementById("cpNew2").addEventListener("keydown",e=>{ if(e.key==="Enter") submitChangePin(); });
+document.querySelectorAll(".pin-input").forEach(inp=>{
+  inp.addEventListener("input",()=>{ inp.value=inp.value.replace(/\D/g,"").slice(0,8); });
+});
+
 function sync(){ document.getElementById("datePicker").value=currentDate; }
 
 /* ---------- install hint (iOS has no auto prompt) ---------- */
@@ -455,6 +687,7 @@ function maybeShowInstall(){
   document.getElementById("weekPicker").value=currentDate;
   await load();
   maybeShowInstall();
+  initLock();
   if("serviceWorker" in navigator){
     window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
   }
