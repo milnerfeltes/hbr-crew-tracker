@@ -57,7 +57,13 @@
   .worker{background:var(--panel);margin:0 12px 12px;border-radius:16px;border:1px solid var(--line);overflow:hidden;}
   .w-head{display:flex;align-items:center;justify-content:space-between;padding:15px 18px 12px;}
   .w-name{font-family:'Archivo';font-weight:700;font-size:17px;letter-spacing:-.01em;}
+  .w-right{display:flex;align-items:center;gap:10px;}
   .w-pct{font-family:'Archivo';font-weight:800;font-size:14px;}
+  .w-remove{color:var(--mut);font-size:19px;line-height:1;padding:2px 7px;border-radius:7px;cursor:pointer;}
+  .w-remove:active{background:var(--panel2);color:var(--red);}
+  .w-archived{display:inline-block;margin-left:9px;font-size:10.5px;font-weight:700;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--mut);background:var(--panel2);border:1px solid var(--line);
+    border-radius:6px;padding:2px 7px;vertical-align:middle;}
   .track{height:7px;background:var(--panel2);border-radius:7px;margin:0 18px 8px;overflow:hidden;}
   .track i{display:block;height:100%;border-radius:7px;transition:width .35s ease;}
   .tasks{padding:2px 10px 8px;}
@@ -83,6 +89,12 @@
   .add input{flex:1;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
     padding:12px 13px;border-radius:10px;font-size:15px;font-family:inherit;}
   .add button{background:var(--amber);color:#1a1205;border:none;width:50px;border-radius:10px;
+    font-size:24px;font-weight:700;cursor:pointer;}
+  .add-worker{display:flex;gap:9px;background:var(--panel);margin:0 12px 14px;padding:14px;
+    border-radius:16px;border:1px dashed var(--line);}
+  .add-worker input{flex:1;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    padding:12px 13px;border-radius:10px;font-size:15px;font-family:inherit;}
+  .add-worker button{background:var(--amber);color:#1a1205;border:none;width:50px;border-radius:10px;
     font-size:24px;font-weight:700;cursor:pointer;}
 
   .blockers{background:var(--panel);margin:4px 12px 14px;border-radius:16px;border:1px solid #3a2c14;overflow:hidden;}
@@ -151,7 +163,7 @@
   <div id="workers"><div class="loading">Loading…</div></div>
   <div id="blockers"></div>
   <div id="saveStatus" class="status"></div>
-  <div class="foot">Tap a task name to set a % done and log why it isn't finished. Everything saves on this phone — works offline.</div>
+  <div class="foot">Tap a task name to set a % done and log why it isn't finished. Add or remove crew below — removing someone keeps all their past data. Everything saves on this phone — works offline.</div>
 </div>
 
 <div id="weeklyView" class="hidden">

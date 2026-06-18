@@ -1,6 +1,7 @@
 "use strict";
 
-const WORKERS = ["Luis Bordón", "Enrique Villalba", "César Cáceres", "Milner Feltes"];
+let WORKERS = ["Luis Bordón", "Enrique Villalba", "César Cáceres", "Milner Feltes"];
+const WORKERS_KEY = "__workers__";
 const DAYNAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
 let state = {};
@@ -69,7 +70,11 @@ function lsSet(d,obj){ try{ localStorage.setItem(lsKey(d),JSON.stringify(obj)); 
 /* ---------- data model ---------- */
 function normalize(day){
   day=day||{};
-  WORKERS.forEach(w=>{
+  // Normalize every worker key already present in the stored data, not just
+  // the current active roster — a removed crew member's historical entries
+  // must still get reason/pct defaults so old days render correctly.
+  const allKeys=new Set([...WORKERS, ...Object.keys(day)]);
+  allKeys.forEach(w=>{
     if(!Array.isArray(day[w])) day[w]=[];
     day[w].forEach(t=>{
       if(typeof t.reason!=="string") t.reason="";
@@ -77,6 +82,14 @@ function normalize(day){
     });
   });
   return day;
+}
+// Workers to show for a given day's data: the active roster, plus anyone no
+// longer on the roster who still has task history recorded that day. This is
+// what makes "remove a worker" a soft delete — their data is never dropped.
+function dayWorkers(day){
+  day=day||{};
+  const extra=Object.keys(day).filter(k=>Array.isArray(day[k])&&day[k].length&&!WORKERS.includes(k));
+  return [...WORKERS, ...extra];
 }
 async function getDay(d){
   try{ const r=await idbGet(d); if(r) return normalize(r); }
@@ -93,6 +106,32 @@ async function save(){
   updateSaveStatus();
 }
 async function load(){ state=await getDay(currentDate); render(); }
+
+/* ---------- crew roster (add / remove workers) ---------- */
+async function loadWorkers(){
+  try{ const r=await idbGet(WORKERS_KEY); if(Array.isArray(r)&&r.length){ WORKERS=r; return; } }
+  catch(e){}
+  const ls=lsGet(WORKERS_KEY); if(Array.isArray(ls)&&ls.length){ WORKERS=ls; return; }
+  await saveWorkers(); // first run on this device — persist the default roster
+}
+async function saveWorkers(){
+  try{ await idbSet(WORKERS_KEY, WORKERS.slice()); }
+  catch(e){ lsSet(WORKERS_KEY, WORKERS.slice()); }
+}
+function addWorker(name){
+  name=(name||"").trim(); if(!name) return;
+  if(WORKERS.some(w=>w.toLowerCase()===name.toLowerCase())) return; // already on the crew
+  WORKERS.push(name);
+  saveWorkers();
+  if(!Array.isArray(state[name])) state[name]=[]; // so today's view/add-task works immediately
+  save(); render();
+}
+function removeWorker(name){
+  if(!confirm(`Remove ${name} from the crew?\n\nThis only takes them off the active list for adding new tasks — every task they've already logged stays saved and still shows up on the days/weeks/PDF reports where it happened.`)) return;
+  WORKERS=WORKERS.filter(w=>w!==name);
+  saveWorkers();
+  render();
+}
 
 /* ---------- mutations ---------- */
 function addTask(w,text){ if(!text.trim())return; state[w].push({id:newId(),text:text.trim(),pct:0,reason:""}); save(); render(); }
@@ -111,7 +150,7 @@ function setPct(w,id,val){
 /* ---------- stats + ring ---------- */
 function stats(day){
   let done=0,total=0,credit=0;
-  WORKERS.forEach(w=>{
+  dayWorkers(day).forEach(w=>{
     const ts=day[w]||[];
     total+=ts.length;
     ts.forEach(t=>{ const p=pctOf(t); if(p>=100) done++; credit+=p/100; });
@@ -141,15 +180,19 @@ function render(){
 
   const wrap=document.getElementById("workers"); wrap.innerHTML="";
   const PRESETS=[100,90,80,70,50,25,0];
-  WORKERS.forEach(w=>{
+  dayWorkers(state).forEach(w=>{
+    const isActive=WORKERS.includes(w);
     const tasks=state[w]||[];
     const done=tasks.filter(t=>isDone(t)).length;
     const wCredit=tasks.reduce((a,t)=>a+pctOf(t)/100,0);
     const pct=tasks.length?Math.round(wCredit/tasks.length*100):0, col=pctColor(tasks.length?pct:0);
     const div=document.createElement("div"); div.className="worker";
     div.innerHTML=`
-      <div class="w-head"><div class="w-name">${esc(w)}</div>
-        <div class="w-pct" style="color:${tasks.length?col:'#8b95a3'}">${pct}% · ${done}/${tasks.length}</div></div>
+      <div class="w-head"><div class="w-name">${esc(w)}${isActive?'':'<span class="w-archived">Removed</span>'}</div>
+        <div class="w-right">
+          <div class="w-pct" style="color:${tasks.length?col:'#8b95a3'}">${pct}% · ${done}/${tasks.length}</div>
+          ${isActive?`<div class="w-remove" data-w="${esc(w)}" data-act="removeworker">×</div>`:''}
+        </div></div>
       <div class="track"><i style="width:${pct}%;background:${col}"></i></div>
       <div class="tasks">
         ${tasks.map(t=>{
@@ -172,16 +215,19 @@ function render(){
               <div class="x" data-w="${esc(w)}" data-id="${t.id}" data-act="del">×</div>
             </div>${why}</div>`;
         }).join("")}
-        <div class="add"><input type="text" placeholder="Add task for ${esc(w.split(' ')[0])}…" data-w="${esc(w)}"><button data-w="${esc(w)}" data-act="add">+</button></div>
+        ${isActive?`<div class="add"><input type="text" placeholder="Add task for ${esc(w.split(' ')[0])}…" data-w="${esc(w)}"><button data-w="${esc(w)}" data-act="add">+</button></div>`:''}
       </div>`;
     wrap.appendChild(div);
   });
+  const addWorkerDiv=document.createElement("div"); addWorkerDiv.className="add-worker";
+  addWorkerDiv.innerHTML=`<input type="text" id="newWorkerName" placeholder="Add crew member…"><button data-act="addworker">+</button>`;
+  wrap.appendChild(addWorkerDiv);
   renderBlockers();
   updateSaveStatus();
 }
 
 function renderBlockers(){
-  const open=[]; WORKERS.forEach(w=>{ (state[w]||[]).forEach(t=>{ if(!isDone(t)) open.push({w,t}); }); });
+  const open=[]; dayWorkers(state).forEach(w=>{ (state[w]||[]).forEach(t=>{ if(!isDone(t)) open.push({w,t}); }); });
   const el=document.getElementById("blockers");
   if(stats(state).total===0){ el.innerHTML=""; return; }
   if(open.length===0){ el.innerHTML=`<div class="blockers"><h2>Why not 100%?</h2><div class="done-all">✓ Everything finished — 100% complete</div></div>`; return; }
@@ -212,7 +258,7 @@ async function renderWeek(){
   dates.forEach(d=>{
     const day=data[d], dt=new Date(d+"T00:00:00"), ds=stats(day);
     let html="";
-    WORKERS.forEach(w=>{
+    dayWorkers(day).forEach(w=>{
       const tasks=day[w]||[];
       if(tasks.length){
         const done=tasks.filter(t=>isDone(t)).length; wDone+=done; wTotal+=tasks.length;
@@ -269,7 +315,7 @@ async function exportPDF(){
     if(ds.total){ const c=ds.pct>=100?[54,194,106]:ds.pct>=50?[200,140,0]:[220,60,60]; doc.setTextColor(c[0],c[1],c[2]); doc.text(ds.pct+"%",pw-72,y+3); }
     y+=30;
     let any=false;
-    WORKERS.forEach(w=>{
+    dayWorkers(day).forEach(w=>{
       const tasks=day[w]||[];
       if(tasks.length){
         any=true; const done=tasks.filter(t=>isDone(t)).length; wDone+=done; wTotal+=tasks.length;
@@ -336,6 +382,9 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
 function focusAddInput(w){
   document.querySelectorAll('.add input[data-w]').forEach(inp=>{ if(inp.dataset.w===w) inp.focus(); });
 }
+function focusNewWorkerInput(){
+  const inp=document.getElementById("newWorkerName"); if(inp) inp.focus();
+}
 
 const daily=document.getElementById("dailyView");
 daily.addEventListener("click",e=>{
@@ -347,10 +396,13 @@ daily.addEventListener("click",e=>{
   else if(act==="setpct"){ setPct(w,id,el.dataset.val); }
   else if(act==="openreason"||act==="editreason"){ openReason=String(id); render();
     const inp=document.querySelector('.why input[data-id="'+id+'"]'); if(inp) inp.focus(); }
+  else if(act==="addworker"){ const inp=document.getElementById("newWorkerName"); addWorker(inp.value); focusNewWorkerInput(); }
+  else if(act==="removeworker"){ removeWorker(w); }
 });
 daily.addEventListener("keydown",e=>{
   if(e.key!=="Enter")return;
   if(e.target.matches('.add input[data-w]')){ const w=e.target.dataset.w; addTask(w,e.target.value); focusAddInput(w); }
+  else if(e.target.matches('#newWorkerName')){ addWorker(e.target.value); focusNewWorkerInput(); }
   else if(e.target.matches('.why input')){ e.target.blur(); }
 });
 daily.addEventListener("input",e=>{ if(e.target.matches(".why input")) setReason(e.target.dataset.w,e.target.dataset.id,e.target.value); });
@@ -383,10 +435,13 @@ function maybeShowInstall(){
 }
 
 /* ---------- boot ---------- */
-sync();
-document.getElementById("weekPicker").value=currentDate;
-load();
-maybeShowInstall();
-if("serviceWorker" in navigator){
-  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
-}
+(async function boot(){
+  await loadWorkers(); // must load the saved crew roster before the first render
+  sync();
+  document.getElementById("weekPicker").value=currentDate;
+  await load();
+  maybeShowInstall();
+  if("serviceWorker" in navigator){
+    window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+  }
+})();
