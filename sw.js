@@ -1,4 +1,4 @@
-const CACHE = "hbr-tracker-v9";
+const CACHE = "hbr-tracker-v10";
 const LOCAL_ASSETS = [
   "./",
   "./index.html",

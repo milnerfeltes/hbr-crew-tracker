@@ -1,7 +1,8 @@
 "use strict";
 
-let WORKERS = ["Luis Bordón", "Enrique Villalba", "César Cáceres", "Milner Feltes"];
+let WORKERS = ["Luis Bordón", "Enrique Villalba", "César Cáceres"];
 const WORKERS_KEY = "__workers__";
+const LASTOPEN_KEY = "__lastOpen__";
 const DAYNAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
 let state = {};
@@ -10,7 +11,7 @@ let currentView = "daily";
 let openReason = null;
 let storageOK = true;
 let isUnlocked = false;
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const MAX_NAME_LEN = 40, MAX_TASK_LEN = 200, MAX_REASON_LEN = 200;
 
 /* ---------- global error safety net ----------
@@ -133,6 +134,41 @@ async function save(){
   updateSaveStatus();
 }
 async function load(){ state=await getDay(currentDate); render(); }
+
+/* ---------- carry unfinished tasks forward to the next day ----------
+   Runs once per calendar-day transition, at boot only — never while just
+   browsing prev/next day or the date picker. Whatever was still under 100%
+   on the last day the app was actually opened gets copied (same text, same
+   % progress, same reason) onto today's list, tagged so the crew can see it
+   rolled over. The original day's record is left untouched, so weekly/PDF
+   history still accurately shows it was open on that day. */
+async function carryOverUnfinishedTasks(){
+  const today=todayStr();
+  let lastOpen=null;
+  try{ lastOpen=await idbGet(LASTOPEN_KEY); }catch(e){ lastOpen=lsGet(LASTOPEN_KEY); }
+  const markOpened=async()=>{ try{ await idbSet(LASTOPEN_KEY,today); }catch(e){ lsSet(LASTOPEN_KEY,today); } };
+
+  if(!lastOpen || lastOpen>=today){ await markOpened(); return; } // first-ever run, or already handled today
+
+  const prevDay=await getDay(lastOpen);
+  const openTasks=[];
+  dayWorkers(prevDay).forEach(w=>{
+    (prevDay[w]||[]).forEach(t=>{ if(!isDone(t)) openTasks.push({w,t}); });
+  });
+  if(!openTasks.length){ await markOpened(); return; }
+
+  const todayDay=await getDay(today);
+  openTasks.forEach(({w,t})=>{
+    if(!Array.isArray(todayDay[w])) todayDay[w]=[];
+    todayDay[w].push({id:newId(), text:t.text, pct:t.pct, reason:t.reason||"", carriedFrom:lastOpen});
+  });
+  try{ await idbSet(today,todayDay); }catch(e){ lsSet(today,todayDay); }
+  await markOpened();
+  showToast(
+    (openTasks.length===1?"1 unfinished task":openTasks.length+" unfinished tasks")+" carried over from "+fmtDate(lastOpen)+".",
+    "success"
+  );
+}
 
 /* ---------- crew roster (add / remove workers) ---------- */
 async function loadWorkers(){
@@ -261,9 +297,17 @@ function resetAppData(){
     "Erase all data on this device?",
     "This deletes every saved day, the crew roster, and the PIN itself — use this only if you've forgotten the PIN. This cannot be undone. Export a backup first if you can.",
     async ()=>{
+      // IndexedDB clearing is best-effort and can hang if another tab/window holds
+      // an open connection — never let that block the actual recovery path (the
+      // PIN itself lives in localStorage), so race it against a short timeout.
       try{
-        const db=await openDB();
-        await new Promise((res)=>{ const tx=db.transaction(STORE,"readwrite"); tx.objectStore(STORE).clear(); tx.oncomplete=res; tx.onerror=res; tx.onabort=res; });
+        await Promise.race([
+          (async()=>{
+            const db=await openDB();
+            await new Promise((res)=>{ const tx=db.transaction(STORE,"readwrite"); tx.objectStore(STORE).clear(); tx.oncomplete=res; tx.onerror=res; tx.onabort=res; });
+          })(),
+          new Promise(res=>setTimeout(res,3000))
+        ]);
       }catch(e){}
       try{ Object.keys(localStorage).filter(k=>k.startsWith("hbr_")).forEach(k=>localStorage.removeItem(k)); }catch(e){}
       location.reload();
@@ -313,13 +357,13 @@ function lockNow(){
 async function exportBackup(){
   try{
     let all={}; try{ all=await idbAll(); }catch(e){}
-    const days={...all}; const workersFromIdb=days[WORKERS_KEY]; delete days[WORKERS_KEY];
+    const days={...all}; const workersFromIdb=days[WORKERS_KEY]; delete days[WORKERS_KEY]; delete days[LASTOPEN_KEY];
     // also sweep localStorage for any day records IDB might be missing (private-mode fallback)
     try{
       Object.keys(localStorage).forEach(k=>{
         if(k.startsWith("hbr_") && k!=="hbr_pin_hash" && k!=="hbr_install_dismissed"){
           const day=k.slice(4);
-          if(day!=="__workers__" && !(day in days)){
+          if(day!=="__workers__" && day!==LASTOPEN_KEY && !(day in days)){
             const v=lsGet(day); if(v) days[day]=v;
           }
         }
@@ -351,6 +395,8 @@ async function handleImportFile(file){
       async ()=>{
         try{
           for(const [d,rec] of Object.entries(data.days)){
+            if(d===WORKERS_KEY || d===LASTOPEN_KEY) continue; // never treat special keys as day records
+            if(!rec || typeof rec!=="object") continue; // skip malformed entries instead of aborting the whole restore
             const clean=normalize(JSON.parse(JSON.stringify(rec)));
             try{ await idbSet(d,clean); }catch(e){ lsSet(d,clean); }
           }
@@ -494,12 +540,13 @@ function render(){
               if(parts.length) why=`<div class="why-tag" data-w="${esc(w)}" data-id="${t.id}" data-act="editreason">⚠ ${esc(parts.join(" — "))}</div>`;
             }
           }
+          const carriedTag=t.carriedFrom?`<div class="carried-tag">&#8635; carried over from ${esc(fmtDate(t.carriedFrom))}</div>`:"";
           return `<div class="task ${tDone?'done':''}">
             <div class="t-row">
               <div class="check ${tDone?'on':''}" data-w="${esc(w)}" data-id="${t.id}" data-act="toggle">${tDone?'✓':''}</div>
               <div class="t-text" data-w="${esc(w)}" data-id="${t.id}" data-act="openreason">${esc(t.text)}</div>
               <div class="x" data-w="${esc(w)}" data-id="${t.id}" data-act="del">×</div>
-            </div>${why}</div>`;
+            </div>${carriedTag}${why}</div>`;
         }).join("")}
         ${isActive?`<div class="add"><input type="text" placeholder="Add task for ${esc(w.split(' ')[0])}…" maxlength="${MAX_TASK_LEN}" data-w="${esc(w)}"><button data-w="${esc(w)}" data-act="add">+</button></div>`:''}
       </div>`;
@@ -764,6 +811,7 @@ function maybeShowInstall(){
 /* ---------- boot ---------- */
 (async function boot(){
   await loadWorkers(); // must load the saved crew roster before the first render
+  await carryOverUnfinishedTasks(); // roll yesterday's open tasks into today, once
   sync();
   document.getElementById("weekPicker").value=currentDate;
   await load();
