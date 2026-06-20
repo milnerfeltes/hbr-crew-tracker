@@ -148,7 +148,22 @@ async function carryOverUnfinishedTasks(){
   try{ lastOpen=await idbGet(LASTOPEN_KEY); }catch(e){ lastOpen=lsGet(LASTOPEN_KEY); }
   const markOpened=async()=>{ try{ await idbSet(LASTOPEN_KEY,today); }catch(e){ lsSet(LASTOPEN_KEY,today); } };
 
-  if(!lastOpen || lastOpen>=today){ await markOpened(); return; } // first-ever run, or already handled today
+  if(lastOpen && lastOpen>=today){ return; } // already handled today, nothing to do
+
+  if(!lastOpen){
+    // This feature has never run on this device before, so there's no marker
+    // to trust — but there may still be real history sitting in storage from
+    // before the update. Look back (cap 30 days) for the most recent day
+    // that actually has tasks recorded, and treat that as the carry source,
+    // instead of assuming a brand-new install with nothing to carry.
+    let probe=today;
+    for(let i=0;i<30 && !lastOpen;i++){
+      probe=shiftDay(probe,-1);
+      const d=await getDay(probe);
+      if(dayWorkers(d).some(w=>(d[w]||[]).length>0)) lastOpen=probe;
+    }
+    if(!lastOpen){ await markOpened(); return; } // genuinely no history yet
+  }
 
   const prevDay=await getDay(lastOpen);
   const openTasks=[];
